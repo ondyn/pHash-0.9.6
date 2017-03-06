@@ -22,6 +22,12 @@
 
 */
 
+/* 
+	Modified by Ivan Pizhenko <ivanp2015@users.noreply.github.com>
+	https://github.com/ivanp2015/pHash-0.9.6
+*/
+
+#include "debug.h"
 #include "audiophash.h"
 #include <sndfile.h>
 #include <samplerate.h>
@@ -260,8 +266,8 @@ float* ph_readaudio(const char *filename, int sr, int channels, float *sigbuf, i
     return ph_readaudio2(filename, sr, sigbuf, buflen, nbsecs);
 }
 
-uint32_t* ph_audiohash(float *buf, int N, int sr, int &nb_frames){
-
+uint32_t* ph_audiohash(float *buf, int N, int sr, int &nb_frames)
+{
    int frame_length = 4096;//2^12
    int nfft = frame_length;
    int nfft_half = 2048;
@@ -282,6 +288,9 @@ uint32_t* ph_audiohash(float *buf, int N, int sr, int &nb_frames){
    //fftw_plan p;
    //pF = (fftw_complex*)fftw_malloc(sizeof(fftw_complex)*nfft);
    complex double *pF = (complex double*)malloc(sizeof(complex double)*nfft);
+   if (!pF) {
+	   return NULL;
+   }
 
    double magnF[nfft_half];
    double maxF = 0.0;
@@ -305,20 +314,35 @@ uint32_t* ph_audiohash(float *buf, int N, int sr, int &nb_frames){
        prev_bark[i] = 0.0;
    }
    uint32_t *hash = (uint32_t*)malloc(nb_frames*sizeof(uint32_t));
+   if (hash == NULL) {
+	   free(pF);
+	   return NULL;
+   }
    double lof,hif;
 
    for (int i=0; i < nb_barks;i++){
        binbarks[i] = 6*asinh(i*sr/nfft_half/600.0);
        freqs[i] = i*sr/nfft_half;
    }
-   double **wts = new double*[nfilts];
-   for (int i=0;i<nfilts;i++){
-      wts[i] = new double[nfft_half];
+   
+   double **wts = (double **) calloc(nfilts, sizeof(double*));
+   if (wts == NULL) {
+	   free(hash);
+	   free(pF);
+	   return NULL;
    }
+   
    for (int i=0;i<nfilts;i++){
-       for (int j=0;j<nfft_half;j++){
-	   wts[i][j] = 0.0;
-       }
+      wts[i] = (double*) calloc(nfft_half, sizeof(double));
+      if (wts[i] == NULL) {
+	      for (int j = 0; j < i; ++j) {
+		      free(wts[j]);
+	      }
+	      free(wts);
+	      free(hash);
+	      free(pF);
+	      return NULL;
+      }
    }
   
    //calculate wts for each filter
@@ -381,16 +405,16 @@ uint32_t* ph_audiohash(float *buf, int N, int sr, int &nb_frames){
        start += advance;
        end   += advance;
    }
-   
 
+   for (int i=0;i<nfilts;i++){
+       free(wts[i]);
+   }
+   free(wts);
 
    //fftw_destroy_plan(p);
    //fftw_free(pF);
    free(pF);
-   for (int i=0;i<nfilts;i++){
-       delete [] wts[i];
-   }
-   delete [] wts;
+
    return hash;
 }
 
@@ -418,8 +442,10 @@ double ph_compare_blocks(const uint32_t *ptr_blockA,const uint32_t *ptr_blockB, 
     result = result/(32*block_size);
     return result;
 }
-double* ph_audio_distance_ber(uint32_t *hash_a , const int Na, uint32_t *hash_b, const int Nb, const float threshold, const int block_size, int &Nc){
 
+double* ph_audio_distance_ber(uint32_t *hash_a , const int Na, uint32_t *hash_b, 
+			      const int Nb, const float threshold, const int block_size, int &Nc)
+{
     uint32_t *ptrA, *ptrB;
     int N1, N2;
     if (Na <= Nb){
@@ -436,34 +462,33 @@ double* ph_audio_distance_ber(uint32_t *hash_a , const int Na, uint32_t *hash_b,
 	N2 = Na;
     }
 
-    double *pC = new double[Nc];
-    if (!pC)
-	return NULL;
     int k,M,nb_above, nb_below, hash1_index,hash2_index;
     double sum_above, sum_below,above_factor, below_factor;
 
     uint32_t *pha,*phb;
-    double *dist = NULL;
 
-    for (int i=0; i < Nc;i++){
+    double *pC = (double*) malloc(Nc * sizeof(double));
+    if (!pC) {
+	    return NULL;
+    }
+  
+    M = (int)floor(std::min(N1,N2)/block_size);
+    double* dist = (double*)malloc((M+1) * sizeof(double));
+    if (!dist) {
+	free(pC);
+	return NULL;
+    }
 
-	M = (int)floor(std::min(N1,N2-i)/block_size);
-
+    for (int i=0; i < Nc;i++) {
+        M = (int)floor(std::min(N1,N2-i)/block_size);
         pha = ptrA;
         phb = ptrB + i;
 
-	double *tmp_dist = (double*)realloc(dist, M*sizeof(double));
-        if (!tmp_dist){
-	    return NULL;
-        }
-        dist = tmp_dist;
-	dist[0] = ph_compare_blocks(pha,phb,block_size);
-
-	k = 1;
-
+	dist[0] = ph_compare_blocks(pha, phb, block_size);	
 	pha += block_size;
 	phb += block_size;
 
+	k = 1;
 	hash1_index = block_size;
 	hash2_index = i + block_size;
 
@@ -478,9 +503,8 @@ double* ph_audio_distance_ber(uint32_t *hash_a , const int Na, uint32_t *hash_b,
 	sum_below = 0;
 	nb_above = 0;
 	nb_below = 0;
-	for (int n = 0; n < M; n++){
-
-	    if (dist[n] <= threshold){
+	for (int n = 0; n < M; n++) {
+	    if (dist[n] <= threshold) {
 		sum_below += 1-dist[n];
 		nb_below++;
 	    } else {

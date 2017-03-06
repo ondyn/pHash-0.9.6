@@ -22,7 +22,12 @@
 
 */
 
+/* 
+	Modified by Ivan Pizhenko <ivanp2015@users.noreply.github.com>
+	https://github.com/ivanp2015/pHash-0.9.6
+*/
 
+#include "debug.h"
 #include "cimgffmpeg.h"
 
 void vfinfo_close(VFInfo  *vfinfo){
@@ -36,14 +41,14 @@ void vfinfo_close(VFInfo  *vfinfo){
     }
 }
 
-int ReadFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList, unsigned int low_index, unsigned int hi_index)
+int ReadFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data, unsigned int low_index, unsigned int hi_index)
 {
         //target pixel format
-	PixelFormat ffmpeg_pixfmt;
+	AVPixelFormat ffmpeg_pixfmt;
 	if (st_info->pixelformat == 0)
-	    ffmpeg_pixfmt = PIX_FMT_GRAY8;
+	    ffmpeg_pixfmt = AV_PIX_FMT_GRAY8;
 	else 
-	    ffmpeg_pixfmt = PIX_FMT_RGB24;
+	    ffmpeg_pixfmt = AV_PIX_FMT_RGB24;
 
 	st_info->next_index = low_index;
 
@@ -51,17 +56,24 @@ int ReadFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList, unsigned int low_
 	    st_info->current_index= 0;
 
         av_log_set_level(AV_LOG_QUIET);
-	    av_register_all();
+	av_register_all();
+
+	debug_printf(("Opening file %s\n", st_info->filename));
 	
 	    // Open video file
 	    if(avformat_open_input(&st_info->pFormatCtx, st_info->filename, NULL, NULL)!=0)
 		return -1 ; // Couldn't open file
+		
+	debug_printf(("File %s opened.\n", st_info->filename));
 	 
 	    // Retrieve stream information
-	    if(avformat_find_stream_info(st_info->pFormatCtx,NULL)<0)
+	    if(avformat_find_stream_info(st_info->pFormatCtx,NULL)<0) { 
+		    avformat_close_input(&st_info->pFormatCtx);
 		return -1; // Couldn't find stream information
+	    }
 	
 	    //dump_format(pFormatCtx,0,NULL,0);//debugging function to print infomation about format
+	debug_printf(("Stream info found.\n"));
 	
 	    unsigned int i;
 	    // Find the video stream
@@ -73,13 +85,19 @@ int ReadFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList, unsigned int low_
 		    break;
 		}
 	    }
-	    if(st_info->videoStream==-1)
+	    if(st_info->videoStream==-1) {
+		avformat_close_input(&st_info->pFormatCtx);
 		return -1; //no video stream
+	    }
+
+	    debug_printf(("Video Stream index %d\n", st_info->videoStream));
 	
 	
 	    // Get a pointer to the codec context for the video stream
 	    st_info->pCodecCtx = st_info->pFormatCtx->streams[st_info->videoStream]->codec;
 	    if (st_info->pCodecCtx == NULL){
+		debug_printf(("There is no codec data\n"));
+		avformat_close_input(&st_info->pFormatCtx);
 		return -1;
 	    }
 
@@ -87,12 +105,17 @@ int ReadFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList, unsigned int low_
 	    st_info->pCodec = avcodec_find_decoder(st_info->pCodecCtx->codec_id);
 	    if(st_info->pCodec==NULL) 
 	    {
+		debug_printf(("Decoder not found\n"));
+		avformat_close_input(&st_info->pFormatCtx);
 	  	return -1 ; // Codec not found
 	    }
 	    // Open codec
-	    if(avcodec_open2(st_info->pCodecCtx, st_info->pCodec,NULL)<0)
+	    if(avcodec_open2(st_info->pCodecCtx, st_info->pCodec,NULL)<0) {
+		debug_printf(("Failed to open codec\n"));
+		avformat_close_input(&st_info->pFormatCtx);
 		return -1; // Could not open codec
-
+	    }
+	    
 	    st_info->height = (st_info->height<=0) ? st_info->pCodecCtx->height : st_info->height;
 	    st_info->width  = (st_info->width<= 0) ? st_info->pCodecCtx->width : st_info->width;
 	}
@@ -100,22 +123,27 @@ int ReadFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList, unsigned int low_
         AVFrame *pFrame;
 
 	// Allocate video frame
-	pFrame=avcodec_alloc_frame();
+	//pFrame=avcodec_alloc_frame();
+	pFrame = av_frame_alloc();
 	if (pFrame==NULL)
 	    return -1;
 
 	// Allocate an AVFrame structure
-	AVFrame *pConvertedFrame = avcodec_alloc_frame();
-	if(pConvertedFrame==NULL)
-	  return -1;
-		
+	//AVFrame *pConvertedFrame = avcodec_alloc_frame();
+	AVFrame *pConvertedFrame = av_frame_alloc();
+	if(pConvertedFrame==NULL) {
+		  vfinfo_close(st_info);
+		return -1;
+	}
 	uint8_t *buffer;
 	int numBytes;
 	// Determine required buffer size and allocate buffer
 	numBytes=avpicture_get_size(ffmpeg_pixfmt, st_info->width,st_info->height);
 	buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
-	if (buffer == NULL)
+	if (buffer == NULL) {
+	    vfinfo_close(st_info);
 	    return -1;
+	}
 
 	avpicture_fill((AVPicture *)pConvertedFrame,buffer,ffmpeg_pixfmt,st_info->width,st_info->height);
 		
@@ -123,7 +151,7 @@ int ReadFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList, unsigned int low_
 	int size = 0;
 	
 
-        int channels = ffmpeg_pixfmt == PIX_FMT_GRAY8 ? 1 : 3;
+        int channels = ffmpeg_pixfmt == AV_PIX_FMT_GRAY8 ? 1 : 3;
 
 	AVPacket packet;
 	int result = 1;
@@ -155,7 +183,7 @@ int ReadFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList, unsigned int low_
 			
 		  next_image.assign(*pConvertedFrame->data, channels,st_info->width,st_info->height,1,true);
 		  next_image.permute_axes("yzcx");
-		  pFrameList->push_back(next_image);
+		  callback(callback_data, next_image);
 		  size++;
 		  }    
 		  st_info->current_index++;
@@ -187,13 +215,13 @@ int ReadFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList, unsigned int low_
 }
 
 
-int NextFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList)
+int NextFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data)
 {
-        PixelFormat ffmpeg_pixfmt;
+        AVPixelFormat ffmpeg_pixfmt;
 	if (st_info->pixelformat == 0)
-	    ffmpeg_pixfmt = PIX_FMT_GRAY8;
+	    ffmpeg_pixfmt = AV_PIX_FMT_GRAY8;
         else 
-	    ffmpeg_pixfmt = PIX_FMT_RGB24;
+	    ffmpeg_pixfmt = AV_PIX_FMT_RGB24;
 
 	if (st_info->pFormatCtx == NULL)
 	{
@@ -205,14 +233,25 @@ int NextFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList)
 		//st_info->pCodecCtx = (AVCodecContext*)malloc(sizeof(AVCodecContext));
 		//st_info->pCodec = (AVCodec*)malloc(sizeof(AVCodec));
 
+#ifdef DEBUG
+		av_log_set_level(AV_LOG_DEBUG);
+#else
 		av_log_set_level(AV_LOG_QUIET);
+#endif
+
+		debug_printf(("Opening file %s\n", st_info->filename));
+		
 		// Open video file
  		if(avformat_open_input(&st_info->pFormatCtx,st_info->filename,NULL,NULL)!=0){
 			return -1 ; // Couldn't open file
 		}
-	 
+
+		debug_printf(("Opened file %s\n", st_info->filename));
+
 		// Retrieve stream information
 		if(avformat_find_stream_info(st_info->pFormatCtx,NULL)<0){
+			debug_printf(("Stream info not found"));
+			avformat_close_input(&st_info->pFormatCtx);
 			return -1; // Couldn't find stream information
 		}
 
@@ -228,37 +267,65 @@ int NextFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList)
 			}
 		}
 
+		debug_printf(("Video Stream index %d\n", st_info->videoStream));
+
 		if(st_info->videoStream==-1){
+			debug_printf(("Video stream not found"));
+			avformat_close_input(&st_info->pFormatCtx);
 		    return -1; //no video stream
 		}
 	
 		// Get a pointer to the codec context for the video stream
 		st_info->pCodecCtx = st_info->pFormatCtx->streams[st_info->videoStream]->codec;
+		if(st_info->pCodecCtx == NULL) {
+			debug_printf(("There is no codec info\n"));
+			avformat_close_input(&st_info->pFormatCtx);
+			return -1 ; // Codec not found
+			
+		}
+		
+		union {
+			unsigned u;
+			char s[5];
+		} z;
+		z.u = st_info->pCodecCtx->codec_tag;
+		z.s[4] = 0;
+		debug_printf(("Codec tag: %x %s\n", z.u, z.s));
 
 		// Find the decoder
 		st_info->pCodec = avcodec_find_decoder(st_info->pCodecCtx->codec_id);
 		if(st_info->pCodec==NULL) 
 		{
+			debug_printf(("Decoder not found\n"));
+			avformat_close_input(&st_info->pFormatCtx);
 			return -1 ; // Codec not found
 		}
 		// Open codec
 		if(avcodec_open2(st_info->pCodecCtx, st_info->pCodec,NULL)<0){
+			debug_printf(("Can't open codec\n"));
+			avformat_close_input(&st_info->pFormatCtx);
 		    return -1; // Could not open codec
 		}
 		
 		st_info->width = (st_info->width<=0) ? st_info->pCodecCtx->width : st_info->width;
 		st_info->height = (st_info->height<=0) ? st_info->pCodecCtx->height : st_info->height;
 		
-	} 
-
+	} else {
+		debug_printf(("File already opened %s\n", st_info->filename));
+	}
+	
 	AVFrame *pFrame;
 
 	// Allocate video frame
-	pFrame=avcodec_alloc_frame();
+	//pFrame=avcodec_alloc_frame();
+	pFrame=av_frame_alloc();
 		
 	// Allocate an AVFrame structure
-	AVFrame *pConvertedFrame = avcodec_alloc_frame();
+//	AVFrame *pConvertedFrame = avcodec_alloc_frame();
+	AVFrame *pConvertedFrame = av_frame_alloc();
 	if(pConvertedFrame==NULL){
+		debug_printf(("Can't allocate frame\n"));
+		vfinfo_close(st_info);
 	  return -1;
 	}
 		
@@ -268,6 +335,9 @@ int NextFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList)
 	numBytes=avpicture_get_size(ffmpeg_pixfmt, st_info->width,st_info->height);
 	buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
 	if (buffer == NULL){
+		debug_printf(("Can't allocate picture buffer\n"));
+		av_free(pConvertedFrame);
+		vfinfo_close(st_info);
 	    return -1;
 	}
 
@@ -281,13 +351,14 @@ int NextFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList)
 	SwsContext *c = sws_getContext(st_info->pCodecCtx->width, st_info->pCodecCtx->height, st_info->pCodecCtx->pix_fmt, st_info->width, st_info->height, ffmpeg_pixfmt , SWS_BICUBIC, NULL, NULL, NULL);
 	while ((result >= 0) && (size < st_info->nb_retrieval))
 	{
-
 		result = av_read_frame(st_info->pFormatCtx, &packet); 
-		if (result < 0) 
+		if (result < 0) {
+			debug_printf(("Can't read frame\n"));
 			break;
+		}
 		if(packet.stream_index == st_info->videoStream) {
 			
-		int channels = ffmpeg_pixfmt == PIX_FMT_GRAY8 ? 1 : 3;
+		int channels = ffmpeg_pixfmt == AV_PIX_FMT_GRAY8 ? 1 : 3;
  		AVPacket avpkt;
                 av_init_packet(&avpkt);
                 avpkt.data = packet.data;
@@ -311,7 +382,7 @@ int NextFrames(VFInfo *st_info, CImgList<uint8_t> *pFrameList)
 				   	
 				next_image.assign(*pConvertedFrame->data, channels, st_info->width,st_info->height,1,true);
 				next_image.permute_axes("yzcx");
-				pFrameList->push_back(next_image);
+				callback(callback_data, next_image);
 				size++;
 				   	 
 		    	}    
@@ -366,12 +437,15 @@ long GetNumberVideoFrames(const char *file)
     av_log_set_level(AV_LOG_QUIET);
 	av_register_all();
 	// Open video file
+	debug_printf(("Opening file %s\n", file));
 	if (avformat_open_input(&pFormatCtx, file, NULL, NULL))
 	  return -1 ; // Couldn't open file
+	debug_printf(("Opened file %s\n", file));
 			 
 	// Retrieve stream information
 	if(avformat_find_stream_info(pFormatCtx, NULL)<0)
 	  return -1; // Couldn't find stream information
+	debug_printf(("Found stream info\n"));
 		
 	// Find the first video stream
 	int videoStream=-1;
@@ -384,23 +458,43 @@ long GetNumberVideoFrames(const char *file)
              }
 	}
 	if(videoStream==-1)
+	{
+	   debug_printf(("Video stream not found\n"));
+	   avformat_close_input(&pFormatCtx); 
 	   return -1; // Didn't find a video stream
+	}
+	debug_printf(("Video stream index %d\n", videoStream));
 	AVStream *str = pFormatCtx->streams[videoStream];
 		
         nb_frames = str->nb_frames;
 	if (nb_frames > 0)
-	{   //the easy way if value is already contained in struct 
-	    avformat_close_input(&pFormatCtx);
-	    return nb_frames;
+	{   //the easy way if value is already contained in struct
+		avformat_close_input(&pFormatCtx);
+		debug_printf(("Easy nb_frames available: %ld\n", nb_frames));
+		return nb_frames;
 	}
 	else { // frames must be counted
-	    AVPacket packet;
+		//AVPacket packet;
 		nb_frames = (long)av_index_search_timestamp(str,str->duration, AVSEEK_FLAG_ANY|AVSEEK_FLAG_BACKWARD);
+		debug_printf(("timestamp by index: %ld\n", nb_frames));
+		if (nb_frames <= 0) {
+			debug_printf(("str->duration: %ld\n", str->duration));
+			if (str->duration > 0) {
+				int timebase = str->time_base.den / str->time_base.num;
+				nb_frames = str->duration/timebase;
+			} else {
+				debug_printf(("pFormatCtx->duration: %ld\n", pFormatCtx->duration));
+				debug_printf(("str->avg_frame_rate: %d/%d\n", 
+					str->avg_frame_rate.num, str->avg_frame_rate.den));
+				if(pFormatCtx->duration > 0) {
+					nb_frames = (((long double)pFormatCtx->duration/AV_TIME_BASE) 
+						* str->avg_frame_rate.num) / str->avg_frame_rate.den;
+				}
+			}
+		}
 		// Close the video file
-		 int timebase = str->time_base.den / str->time_base.num;
-               if (nb_frames <= 0)
-                       nb_frames = str->duration/timebase;
 		avformat_close_input(&pFormatCtx); 
+		debug_printf(("Counted nb_frames: %ld\n", nb_frames));
 		return nb_frames;
 	}
 }
@@ -410,13 +504,18 @@ float fps(const char *filename)
         float result = 0;
 	AVFormatContext *pFormatCtx = NULL;
 	
+	debug_printf(("Opening file %s\n", filename));
 	// Open video file
 	if (avformat_open_input(&pFormatCtx, filename, NULL, NULL))
 	  return -1 ; // Couldn't open file
+	debug_printf(("Opened file %s\n", filename));
 				 
 	// Retrieve stream information
-	if(avformat_find_stream_info(pFormatCtx,NULL)<0)
+	if(avformat_find_stream_info(pFormatCtx,NULL)<0) {
+	  avformat_close_input(&pFormatCtx);
 	  return -1; // Couldn't find stream information
+	}
+	debug_printf(("Found stream info\n"));
 			
 	// Find the first video stream
 	int videoStream=-1;
@@ -428,15 +527,47 @@ float fps(const char *filename)
 			    break;
 		     }
 	}
-        if(videoStream==-1)
+        if(videoStream==-1) {
+	   debug_printf(("Video stream not found\n"));
+	   avformat_close_input(&pFormatCtx); 
 	    return -1; // Didn't find a video stream
+	}
+
+	debug_printf(("Video stream index %d\n", videoStream));
+	AVStream *str = pFormatCtx->streams[videoStream];
 	
-	int num = (pFormatCtx->streams[videoStream]->r_frame_rate).num;
-	int den = (pFormatCtx->streams[videoStream]->r_frame_rate).den;
-	result = num/den;
+#if 0
+	int num = str->r_frame_rate.num;
+	int den = str->r_frame_rate.den;
+	debug_printf(("str->r_frame_rate: num=%d, den=%d\n", num, den));
+#else
+	int num = 0;
+	int den = 0;
+#endif
+	result = den == 0 ? 0.0f : (float)num/den;
+	debug_printf(("Current FPS=%f\n", result));
+	if (result == 0.0f) {
+		num = str->avg_frame_rate.num;
+		den = str->avg_frame_rate.den;		
+		debug_printf(("str->avg_frame_rate: num=%d, den=%d\n", num, den));
+		result = den == 0 ? 0.0f : (float)num/den;
+		debug_printf(("Current FPS=%f\n", result));
+	}
+	if (result == 0.0f) {
+		num = str->codec->time_base.num;
+		den = str->codec->time_base.den;		
+		debug_printf(("str->codec->time_base: num=%d, den=%d\n", num, den));
+		// fps = 1.0 / timebase
+		result = num == 0 ? 0.0f : (float)den/num;
+		debug_printf(("Current FPS=%f\n", result));
+	}
+	if (result == 0.0f) {
+		result = -1;
+	}
 
 	avformat_close_input(&pFormatCtx);
-	
+
+	debug_printf(("Final FPS=%f\n", result));
 	return result;
 
 }

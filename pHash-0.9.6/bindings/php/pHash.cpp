@@ -12,9 +12,19 @@
    +----------------------------------------------------------------------+
 */
 
+/* 
+	Modified by Ivan Pizhenko <ivanp2015@users.noreply.github.com>
+	https://github.com/ivanp2015/pHash-0.9.6
+*/
+
 /* $ Id: $ */
 
 #include "php_pHash.h"
+#include <cctype>
+#include <cstring>
+#include <algorithm>
+#include "debug.h"
+
 
 #if HAVE_PHASH
 
@@ -48,7 +58,7 @@ static unsigned char pHash_logo[] = {
 
 /* {{{ Resource destructors */
 int le_ph_video_hash;
-extern "C" void ph_video_hash_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
+extern "C" void ph_video_hash_dtor(PORTABLE_ZEND_RESOURCE *rsrc TSRMLS_DC)
 {
 	ph_video_hash * resource = (ph_video_hash *)(rsrc->ptr);
 
@@ -60,7 +70,7 @@ extern "C" void ph_video_hash_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 }
 
 int le_ph_image_hash;
-extern "C" void ph_image_hash_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
+extern "C" void ph_image_hash_dtor(PORTABLE_ZEND_RESOURCE *rsrc TSRMLS_DC)
 {
 	ulong64 * resource = (ulong64 *)(rsrc->ptr);
 
@@ -69,7 +79,7 @@ extern "C" void ph_image_hash_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 }
 
 int le_ph_audio_hash;
-extern "C" void ph_audio_hash_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
+extern "C" void ph_audio_hash_dtor(PORTABLE_ZEND_RESOURCE *rsrc TSRMLS_DC)
 {
 	ph_audio_hash * resource = (ph_audio_hash *)(rsrc->ptr);
 
@@ -81,7 +91,7 @@ extern "C" void ph_audio_hash_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 }
 
 int le_ph_txt_hash;
-extern "C" void ph_txt_hash_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
+extern "C" void ph_txt_hash_dtor(PORTABLE_ZEND_RESOURCE *rsrc TSRMLS_DC)
 {
 	ph_text_hash * resource = (ph_text_hash *)(rsrc->ptr);
 
@@ -98,6 +108,8 @@ extern "C" void ph_txt_hash_dtor(zend_rsrc_list_entry *rsrc TSRMLS_DC)
 zend_function_entry pHash_functions[] = {
 #if HAVE_VIDEO_HASH
 	PHP_FE(ph_dct_videohash    , ph_dct_videohash_arg_info)
+	PHP_FE(ph_dct_videohash2   , ph_dct_videohash2_arg_info) // [IP] custom function
+	PHP_FE(ph_dct_videohash3   , ph_dct_videohash3_arg_info) // [IP] custom function
 #endif /* HAVE_VIDEO_HASH */
 #if HAVE_IMAGE_HASH
 	PHP_FE(ph_dct_imagehash    , ph_dct_imagehash_arg_info)
@@ -105,15 +117,18 @@ zend_function_entry pHash_functions[] = {
 	PHP_FE(ph_texthash         , ph_texthash_arg_info)
 #if HAVE_AUDIO_HASH
 	PHP_FE(ph_audiohash        , ph_audiohash_arg_info)
+	PHP_FE(ph_audiohash2       , ph_audiohash2_arg_info) // [IP] custom function
 #endif /* HAVE_AUDIO_HASH */
 #if HAVE_IMAGE_HASH
 	PHP_FE(ph_image_dist       , ph_image_dist_arg_info)
 #endif /* HAVE_IMAGE_HASH */
 #if HAVE_VIDEO_HASH
 	PHP_FE(ph_video_dist       , ph_video_dist_arg_info)
+	PHP_FE(ph_video_dist2      , ph_video_dist2_arg_info) // [IP] custom function
 #endif /* HAVE_VIDEO_HASH */
 #if HAVE_AUDIO_HASH
 	PHP_FE(ph_audio_dist       , ph_audio_dist_arg_info)
+	PHP_FE(ph_audio_dist2      , ph_audio_dist2_arg_info) // [IP] custom function
 #endif /* HAVE_AUDIO_HASH */
 	PHP_FE(ph_compare_text_hashes, ph_compare_text_hashes_arg_info)
 	{ NULL, NULL, NULL }
@@ -218,11 +233,19 @@ PHP_MINFO_FUNCTION(pHash)
 	php_info_print_table_row(2, "Released", "2013-04-23");
 	php_info_print_table_row(2, "CVS Revision", "$Id: $");
 	php_info_print_table_row(2, "Authors", "Evan Klinger 'eklinger@phash.org' (lead)\n");
+	php_info_print_table_row(2, "Modified-By", "Ivan Pizhenko 'ivanp2015@users.noreply.github.com'\n"); 
+	php_info_print_table_row(2, "Modified-Source", "https://github.com/ivanp2015/pHash-0.9.6\n");
+	php_info_print_table_row(2, "Modification-Date", "2016-12-31");
 	php_info_print_table_end();
 	/* add your stuff here */
 }
 }
 /* }}} */
+
+static inline void put_hex_symbol(char* pdest, unsigned char hex)
+{
+	*pdest = hex + ((hex < 10) ? '0' : 'A' - 10);
+}
 
 
 #if HAVE_VIDEO_HASH
@@ -231,12 +254,10 @@ PHP_MINFO_FUNCTION(pHash)
 PHP_FUNCTION(ph_dct_videohash)
 {
 	ph_video_hash * return_res;
-	long return_res_id = -1;
+	PORTABLE_DECLARE_RETURN_RES_ID;
 
 	const char * file = NULL;
-	int file_len = 0;
-
-
+	PORTABLE_STRING_PARAMETER_LENGTH file_len = 0;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &file, &file_len) == FAILURE) {
 		return;
@@ -255,9 +276,108 @@ PHP_FUNCTION(ph_dct_videohash)
 	else
 		RETURN_FALSE;
 
-	return_res_id = ZEND_REGISTER_RESOURCE(return_value, return_res, le_ph_video_hash);
+	PORTABLE_ZEND_REGISTER_RESOURCE(return_res_id, return_value, return_res, le_ph_video_hash);
 }
 /* }}} ph_dct_videohash */
+
+
+// [IP] our custom function
+/* {{{ proto string ph_video_hash ph_dct_videohash2(string file)
+  pHash DCT video hash as string */
+PHP_FUNCTION(ph_dct_videohash2)
+{
+	const char * file = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH file_len = 0;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &file, &file_len) == FAILURE) {
+		return;
+	}
+
+	debug_printf(("php: ph_dct_videohash2: File: %s\n", file));
+	
+	// compute pHash
+	size_t len = 0;
+	ulong64 *video_hash = ph_dct_videohash2(file, len);
+	if(video_hash) {
+		debug_printf(("php: ph_dct_videohash2: Hash Length: %zu\n", len));
+		// allocate memory for output string
+		char* hashstr =  static_cast<char*>(emalloc(len * sizeof(ulong64) * 2 + 1));
+		if (hashstr) {
+			// build output string
+			char* dest = hashstr;
+			const unsigned char* src = reinterpret_cast<unsigned char*>(video_hash);
+			const unsigned char* src_end = src + len * sizeof(ulong64);
+			while (src != src_end) {
+				put_hex_symbol(dest++, (*src) >> 4);
+				put_hex_symbol(dest++, (*src) & 0xF);
+				++src;
+			}
+			*dest = 0;
+			
+			// free memory allocated by pHash
+			free(video_hash);
+			
+			debug_printf(("php: ph_dct_videohash2: Hash: %s\n", hashstr));
+
+			PORTABLE_RETURN_STRING(hashstr);
+		} else {
+			// free memory allocated by pHash
+			free(video_hash);
+		}
+	}
+	RETURN_FALSE;
+}
+/* }}} ph_dct_videohash2 */
+
+
+// [IP] our custom function
+/* {{{ proto string ph_video_hash ph_dct_videohash2(string file)
+  pHash DCT video hash as string */
+PHP_FUNCTION(ph_dct_videohash3)
+{
+	const char * file = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH file_len = 0;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &file, &file_len) == FAILURE) {
+		return;
+	}
+
+	debug_printf(("php: ph_dct_videohash3: File: %s\n", file));
+	
+	// compute pHash
+	int len0 = 0;
+	ulong64 *video_hash = ph_dct_videohash(file, len0);
+	size_t len = len0;
+	if(video_hash) {
+		debug_printf(("php: ph_dct_videohash3: Hash Length: %zu\n", len));
+		// allocate memory for output string
+		char* hashstr =  static_cast<char*>(emalloc(len * sizeof(ulong64) * 2 + 1));
+		if (hashstr) {
+			// build output string
+			char* dest = hashstr;
+			const unsigned char* src = reinterpret_cast<unsigned char*>(video_hash);
+			const unsigned char* src_end = src + len * sizeof(ulong64);
+			while (src != src_end) {
+				put_hex_symbol(dest++, (*src) >> 4);
+				put_hex_symbol(dest++, (*src) & 0xF);
+				++src;
+			}
+			*dest = 0;
+			
+			// free memory allocated by pHash
+			free(video_hash);
+			
+			debug_printf(("php: ph_dct_videohash3: Hash: %s\n", hashstr));
+			
+			PORTABLE_RETURN_STRING(hashstr);
+		} else {
+			// free memory allocated by pHash
+			free(video_hash);
+		}
+	}
+	RETURN_FALSE;
+}
+/* }}} ph_dct_videohash3 */
 
 #endif /* HAVE_VIDEO_HASH */
 
@@ -270,12 +390,10 @@ PHP_FUNCTION(ph_dct_imagehash)
 	long return_res_id = -1;
 
 	const char * file = NULL;
-	int file_len = 0;
+	PORTABLE_STRING_PARAMETER_LENGTH file_len = 0;
 	char buffer [64];
 	int n;
 	char *str;
-
-
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &file, &file_len) == FAILURE) {
 		return;
@@ -293,7 +411,7 @@ PHP_FUNCTION(ph_dct_imagehash)
 		n = sprintf(buffer, "%016llx", *hash);
 		str = estrdup(buffer);
 		free(hash);
-		RETURN_STRING(str, 0);
+		PORTABLE_RETURN_STRING(str);
 	}
 }
 /* }}} ph_dct_imagehash */
@@ -305,12 +423,10 @@ PHP_FUNCTION(ph_dct_imagehash)
 PHP_FUNCTION(ph_texthash)
 {
 	ph_text_hash * return_res;
-	long return_res_id = -1;
+	PORTABLE_DECLARE_RETURN_RES_ID;
 
 	const char * file = NULL;
-	int file_len = 0;
-
-
+	PORTABLE_STRING_PARAMETER_LENGTH file_len = 0;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s", &file, &file_len) == FAILURE) {
 		return;
@@ -328,25 +444,24 @@ PHP_FUNCTION(ph_texthash)
 	else
 		RETURN_FALSE;
 
-	return_res_id = ZEND_REGISTER_RESOURCE(return_value, return_res, le_ph_txt_hash);
+	PORTABLE_ZEND_REGISTER_RESOURCE(return_res_id, return_value, return_res, le_ph_txt_hash);
 }
 /* }}} ph_texthash */
 
 
 #if HAVE_AUDIO_HASH
+
 /* {{{ proto resource ph_audio_hash ph_audiohash(string file, int sample_rate=5512, int channels=1)
   pHash audio hash */
 PHP_FUNCTION(ph_audiohash)
 {
 	ph_audio_hash * return_res;
-	long return_res_id = -1;
+	PORTABLE_DECLARE_RETURN_RES_ID;
 
 	const char * file = NULL;
-	int file_len = 0;
-	long sample_rate = 5512;
-	long channels = 1;
-
-
+	PORTABLE_STRING_PARAMETER_LENGTH file_len = 0;
+	PORTABLE_LONG_PARAMETER sample_rate = 5512;
+	PORTABLE_LONG_PARAMETER channels = 1;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|ll", &file, &file_len, &sample_rate, &channels) == FAILURE) {
 		return;
@@ -365,7 +480,6 @@ PHP_FUNCTION(ph_audiohash)
 			ph_audio_hash *h = (ph_audio_hash *)malloc(sizeof(ph_audio_hash));
 			h->hash = hash;
 			h->len = nb_frames;
-
 			return_res = h;
 		}
 		else
@@ -374,9 +488,71 @@ PHP_FUNCTION(ph_audiohash)
 	else
 		RETURN_FALSE;
 
-	return_res_id = ZEND_REGISTER_RESOURCE(return_value, return_res, le_ph_audio_hash);
+	PORTABLE_ZEND_REGISTER_RESOURCE(return_res_id, return_value, return_res, le_ph_audio_hash);
 }
 /* }}} ph_audiohash */
+
+/* {{{ proto string ph_audiohash2(string file, int sample_rate=5512, int channels=1)
+  pHash audio hash as string */
+PHP_FUNCTION(ph_audiohash2)
+{
+	ph_audio_hash * return_res;
+
+	const char * file = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH file_len = 0;
+	PORTABLE_LONG_PARAMETER sample_rate = 5512;
+	PORTABLE_LONG_PARAMETER channels = 1;
+
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "s|ll", 
+		&file, &file_len, &sample_rate, &channels) == FAILURE) {
+		return;
+	}
+
+	int n = 0;
+	float *audiobuf = ph_readaudio(file, sample_rate, channels, NULL, n);
+	if(audiobuf)
+	{
+		int nb_frames = 0;
+		uint32_t *audio_hash = ph_audiohash(audiobuf, n, sample_rate, nb_frames);
+		free(audiobuf);
+
+		if(audio_hash) {
+			// allocate memory for output string
+			size_t len = nb_frames;
+			char* hashstr =  static_cast<char*>(emalloc(len * sizeof(uint32_t) * 2 + 1));
+			if (hashstr) {
+				// build output string
+				char* dest = hashstr;
+				const unsigned char* src = reinterpret_cast<unsigned char*>(audio_hash);
+				const unsigned char* src_end = src + len * sizeof(uint32_t);
+				while (src != src_end) {
+					put_hex_symbol(dest++, (*src) >> 4);
+					put_hex_symbol(dest++, (*src) & 0xF);
+					++src;
+				}
+				*dest = 0;
+				
+				// free memory allocated by pHash
+				free(audio_hash);
+				
+				debug_printf(("php: ph_audiohash2: Hash: %s\n", hashstr));
+				
+				PORTABLE_RETURN_STRING(hashstr);
+			} else {
+				// free memory allocated by pHash
+				debug_printf(("php: ph_audiohash2: emalloc hashstr failed"));
+				free(audio_hash);
+			}
+		} else {
+			debug_printf(("php: ph_audiohash2: audio hash failed"));
+		}
+	} else {
+		debug_printf(("php: ph_audiohash2: read audio failed"));
+	}
+	RETURN_FALSE;
+}
+/* }}} ph_audiohash */
+
 
 #endif /* HAVE_AUDIO_HASH */
 
@@ -390,10 +566,10 @@ PHP_FUNCTION(ph_image_dist)
 	zval * h2_res = NULL;
 	int h2_resid = -1;
 
-	char *num1;
-	int num1_len;
-	char *num2;
-	int num2_len;
+	char *num1 = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH num1_len = 0;
+	char *num2 = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH num2_len = 0;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss", &num1, &num1_len, &num2, &num2_len) == FAILURE) {
 		return;
@@ -418,29 +594,67 @@ PHP_FUNCTION(ph_image_dist)
 
 #endif /* HAVE_IMAGE_HASH */
 
+static inline unsigned char decode_hex_char(char ch)
+{
+	if (isdigit(ch)) {
+		return ch - '0';
+	} else if (isupper(ch)) {
+		return ch - 'A' + 10;
+	} else {
+		return ch - 'a' + 10;
+	}	
+}
+
+static bool decode_hex_string(unsigned char* dest, const char* src)
+{
+	while (*src) {
+		char ch_hi = *src++;
+		if (!isxdigit(ch_hi)) {
+			return false;
+		}
+
+		char ch_lo = *src++;
+		if (!isxdigit(ch_lo)) {
+			return false;
+		}
+
+		*dest++ = (decode_hex_char(ch_hi) << 4) 
+			| decode_hex_char(ch_lo);
+	}
+	return true;
+}
+
+template<class T>
+struct emem_ptr
+{
+	emem_ptr(T* p) : m_p(p) {}
+	emem_ptr(void* p) : m_p(static_cast<T*>(p)) {}
+	~emem_ptr() { if(m_p) efree(m_p); }
+	operator bool() const { return m_p != 0; }
+	T* m_p;
+};
+
+
 #if HAVE_VIDEO_HASH
-/* {{{ proto float ph_video_dist(resource ph_video_hash h1,resource ph_video_hash h2, int thresh=21)
+
+/* {{{ proto float ph_video_dist2(resource ph_video_hash h1,resource ph_video_hash h2, int thresh=21)
   pHash video distance. */
 PHP_FUNCTION(ph_video_dist)
 {
 	zval * h1_res = NULL;
-	int h1_resid = -1;
-	ph_video_hash * h1;
+	ph_video_hash * h1 = NULL;
+
 	zval * h2_res = NULL;
-	int h2_resid = -1;
-	ph_video_hash * h2;
+	ph_video_hash * h2 = NULL;
 
-	long thresh = 21;
-
-
+	PORTABLE_LONG_PARAMETER thresh = 21;
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rr|l", &h1_res, &h2_res, &thresh) == FAILURE) {
 		return;
 	}
-	ZEND_FETCH_RESOURCE(h1, ph_video_hash *, &h1_res, h1_resid, "ph_video_hash", le_ph_video_hash);
-	ZEND_FETCH_RESOURCE(h2, ph_video_hash *, &h2_res, h2_resid, "ph_video_hash", le_ph_video_hash);
 
-
+	PORTABLE_ZEND_FETCH_RESOURCE(h1, ph_video_hash *, &h1_res, -1, "ph_video_hash", le_ph_video_hash);
+	PORTABLE_ZEND_FETCH_RESOURCE(h2, ph_video_hash *, &h2_res, -1, "ph_video_hash", le_ph_video_hash);
 
 	if(h1 && h2)
 	{
@@ -452,49 +666,111 @@ PHP_FUNCTION(ph_video_dist)
 }
 /* }}} ph_video_dist */
 
+
+
+// [IP] Our custom functon
+/* {{{ proto float ph_video_dist2(string h1, string h2, int thresh=21)
+  pHash video distance (hashes as strings). */
+PHP_FUNCTION(ph_video_dist2)
+{
+	const char* str_h1 = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH h1_len = 0;
+
+	const char* str_h2 = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH h2_len = 0;
+
+	PORTABLE_LONG_PARAMETER thresh = 21;
+
+	// parse functions parameters
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|l", &str_h1, &h1_len, &str_h2, &h2_len, &thresh) == FAILURE) {
+		return;
+	}
+	
+	// printf("h1=%s\nh2=%s\n", str_h1, str_h2);
+
+	// validate hash string lengths
+	if(h1_len == 0 || h2_len == 0 || h1_len % (sizeof(ulong64) * 2) != 0 || h2_len % (sizeof(ulong64) * 2) != 0) {
+		RETURN_DOUBLE(-1);
+	}
+	//printf(">>> 1\n");
+	
+	// allocate buffer for hash1
+	emem_ptr<unsigned char> bh1(emalloc(h1_len / 2));
+	if(!bh1) {
+		RETURN_DOUBLE(-2);
+	}
+	//printf(">>> 2\n");
+
+	// decode string hash #1 into the binary form
+	if(!decode_hex_string(bh1.m_p, str_h1)) {
+		RETURN_DOUBLE(-3);
+	}
+	//printf(">>> 3\n");
+	
+	// allocate buffer for hash2
+	emem_ptr<unsigned char> bh2(emalloc(h2_len / 2));
+	if(!bh2) {
+		RETURN_DOUBLE(-4);
+	}
+	//printf(">>> 4\n");
+
+	// decode string hash #1 into the binary form
+	if(!decode_hex_string(bh2.m_p, str_h2)) {
+		RETURN_DOUBLE(-5);
+	}
+	//printf(">>> 5\n");
+
+	double sim = 0.0;
+	if(ph_dct_videohash_dist2(
+		reinterpret_cast<const ulong64*>(bh1.m_p), h1_len / 16, 
+		reinterpret_cast<const ulong64*>(bh2.m_p), h2_len / 16,
+		thresh, &sim) < 0) {
+		//printf(">>> 6\n");
+		RETURN_DOUBLE(-6);
+	}
+
+	//printf(">>> 7\n");
+	//printf("Result: %.8f\n", sim);
+
+	RETURN_DOUBLE(sim);
+}
+/* }}} ph_video_dist */
+
 #endif /* HAVE_VIDEO_HASH */
 
+
 #if HAVE_AUDIO_HASH
-/* {{{ proto float ph_audio_dist(resource ph_audio_hash h1,resource ph_audio_hash h2,
+
+/* {{{ proto float ph_audio_dist(resource ph_audio_hash h1,resource ph_audio_hash h2, 
 		int block_size=256, float thresh=0.30)
   pHash audio distance. */
 PHP_FUNCTION(ph_audio_dist)
 {
 	zval * h1_res = NULL;
-	int h1_resid = -1;
 	ph_audio_hash * h1;
+
 	zval * h2_res = NULL;
-	int h2_resid = -1;
 	ph_audio_hash * h2;
 
-	long block_size = 256;
+	PORTABLE_LONG_PARAMETER block_size = 256;
 	double thresh = 0.30;
 
-
-
-	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rr|ld", &h1_res, &h2_res, &block_size, &thresh) == FAILURE) {
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rr|ld", &h1_res, &h2_res, &block_size, &thresh) == 
+		FAILURE) {
 		return;
 	}
-	ZEND_FETCH_RESOURCE(h1, ph_audio_hash *, &h1_res, h1_resid, "ph_audio_hash", le_ph_audio_hash);
-	ZEND_FETCH_RESOURCE(h2, ph_audio_hash *, &h2_res, h2_resid, "ph_audio_hash", le_ph_audio_hash);
 
-
-
+	PORTABLE_ZEND_FETCH_RESOURCE(h1, ph_audio_hash *, &h1_res, -1, "ph_audio_hash", le_ph_audio_hash);
+	PORTABLE_ZEND_FETCH_RESOURCE(h2, ph_audio_hash *, &h2_res, -1, "ph_audio_hash", le_ph_audio_hash);
+	
 	if(h1 && h2)
 	{
 		int Nc;
-		double *cs = ph_audio_distance_ber(h1->hash, h1->len, h2->hash, h2->len,
+		double *cs = ph_audio_distance_ber(h1->hash, h1->len, h2->hash, h2->len, 
 				thresh, block_size, Nc);
 		if(cs)
 		{
-			double max_cs = 0.0;
-			for (int i = 0; i < Nc; ++i)
-			{
-				if (cs[i] > max_cs)
-				{
-					max_cs = cs[i];
-				}
-			}
+			double max_cs = *std::max_element(cs, cs + Nc);
 			free(cs);
 			RETURN_DOUBLE(max_cs);
 		}
@@ -506,6 +782,76 @@ PHP_FUNCTION(ph_audio_dist)
 }
 /* }}} ph_audio_dist */
 
+
+/* {{{ proto float ph_audio_dist2(string h1, string h2,
+		int block_size=256, float thresh=0.30)
+  pHash audio distance. */
+PHP_FUNCTION(ph_audio_dist2)
+{
+	const char* str_h1 = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH h1_len = 0;
+
+	const char* str_h2 = NULL;
+	PORTABLE_STRING_PARAMETER_LENGTH h2_len = 0;
+
+	PORTABLE_LONG_PARAMETER block_size = 256;
+	double thresh = 0.30;
+
+	// parse functions parameters
+	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "ss|ld", &str_h1, &h1_len, &str_h2, &h2_len, 
+		&block_size, &thresh) == FAILURE) {
+		return;
+	}
+	
+	// validate hash string lengths
+	if(h1_len == 0 || h2_len == 0 || h1_len % (sizeof(uint32_t) * 2) != 0 || h2_len % (sizeof(uint32_t) * 2) != 0) {
+		RETURN_DOUBLE(-1);
+	}
+	//printf(">>> 1\n");
+	
+	// allocate buffer for hash1
+	emem_ptr<unsigned char> bh1(emalloc(h1_len / 2));
+	if(!bh1) {
+		RETURN_DOUBLE(-2);
+	}
+	//printf(">>> 2\n");
+
+	// decode string hash #1 into the binary form
+	if(!decode_hex_string(bh1.m_p, str_h1)) {
+		RETURN_DOUBLE(-3);
+	}
+	//printf(">>> 3\n");
+	
+	// allocate buffer for hash2
+	emem_ptr<unsigned char> bh2(emalloc(h2_len / 2));
+	if(!bh2) {
+		RETURN_DOUBLE(-4);
+	}
+	//printf(">>> 4\n");
+
+	// decode string hash #1 into the binary form
+	if(!decode_hex_string(bh2.m_p, str_h2)) {
+		RETURN_DOUBLE(-5);
+	}
+	//printf(">>> 5\n");
+
+	int Nc;
+	double *cs = ph_audio_distance_ber(
+		reinterpret_cast<uint32_t*>(bh1.m_p), h1_len, 
+		reinterpret_cast<uint32_t*>(bh2.m_p), h2_len,
+		thresh, block_size, Nc);
+	if(cs)
+	{
+		double max_cs = *std::max_element(cs, cs + Nc);
+		free(cs);
+		RETURN_DOUBLE(max_cs);
+	}
+	else
+		RETURN_DOUBLE(-6);
+}
+/* }}} ph_audio_dist2 */
+
+
 #endif /* HAVE_AUDIO_HASH */
 
 /* {{{ proto array ph_compare_text_hashes(resource ph_txt_hash h1,resource ph_txt_hash h2)
@@ -513,22 +859,18 @@ PHP_FUNCTION(ph_audio_dist)
 PHP_FUNCTION(ph_compare_text_hashes)
 {
 	zval * h1_res = NULL;
-	int h1_resid = -1;
 	ph_text_hash * h1;
+
 	zval * h2_res = NULL;
-	int h2_resid = -1;
 	ph_text_hash * h2;
-
-
 
 
 	if (zend_parse_parameters(ZEND_NUM_ARGS() TSRMLS_CC, "rr", &h1_res, &h2_res) == FAILURE) {
 		return;
 	}
-	ZEND_FETCH_RESOURCE(h1, ph_text_hash *, &h1_res, h1_resid, "ph_txt_hash", le_ph_txt_hash);
-	ZEND_FETCH_RESOURCE(h2, ph_text_hash *, &h2_res, h2_resid, "ph_txt_hash", le_ph_txt_hash);
 
-
+	PORTABLE_ZEND_FETCH_RESOURCE(h1, ph_text_hash *, &h1_res, -1, "ph_txt_hash", le_ph_txt_hash);
+	PORTABLE_ZEND_FETCH_RESOURCE(h2, ph_text_hash *, &h2_res, -1, "ph_txt_hash", le_ph_txt_hash);
 
 	array_init(return_value);
 
@@ -540,8 +882,8 @@ PHP_FUNCTION(ph_compare_text_hashes)
 		{
 			for(int i = 0; i < count; ++i)
 			{
-				zval *array;
-				MAKE_STD_ZVAL(array);
+				PORTABLE_DECLARE_ZVAL(array);
+				PORTABLE_MAKE_STD_ZVAL(array);
 				array_init(array);
 				add_assoc_long(array, "begin", m[i].first_index);
 				add_assoc_long(array, "end", m[i].second_index);
