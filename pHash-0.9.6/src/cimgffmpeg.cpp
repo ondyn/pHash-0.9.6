@@ -123,13 +123,13 @@ int ReadFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data, 
         AVFrame *pFrame;
 
 	// Allocate video frame
-	//pFrame=avcodec_alloc_frame();
+	//pFrame=av_frame_alloc();
 	pFrame = av_frame_alloc();
 	if (pFrame==NULL)
 	    return -1;
 
 	// Allocate an AVFrame structure
-	//AVFrame *pConvertedFrame = avcodec_alloc_frame();
+	//AVFrame *pConvertedFrame = av_frame_alloc();
 	AVFrame *pConvertedFrame = av_frame_alloc();
 	if(pConvertedFrame==NULL) {
 		  vfinfo_close(st_info);
@@ -317,11 +317,11 @@ int NextFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data)
 	AVFrame *pFrame;
 
 	// Allocate video frame
-	//pFrame=avcodec_alloc_frame();
+	//pFrame=av_frame_alloc();
 	pFrame=av_frame_alloc();
 		
 	// Allocate an AVFrame structure
-//	AVFrame *pConvertedFrame = avcodec_alloc_frame();
+//	AVFrame *pConvertedFrame = av_frame_alloc();
 	AVFrame *pConvertedFrame = av_frame_alloc();
 	if(pConvertedFrame==NULL){
 		debug_printf(("Can't allocate frame\n"));
