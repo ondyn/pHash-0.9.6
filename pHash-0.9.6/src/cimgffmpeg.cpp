@@ -138,14 +138,14 @@ int ReadFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data, 
 	uint8_t *buffer;
 	int numBytes;
 	// Determine required buffer size and allocate buffer
-	numBytes=avpicture_get_size(ffmpeg_pixfmt, st_info->width,st_info->height);
+	numBytes=av_image_get_buffer_size(ffmpeg_pixfmt,st_info->width,st_info->height,1);
 	buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
 	if (buffer == NULL) {
 	    vfinfo_close(st_info);
 	    return -1;
 	}
 
-	avpicture_fill((AVPicture *)pConvertedFrame,buffer,ffmpeg_pixfmt,st_info->width,st_info->height);
+	av_image_fill_arrays(pConvertedFrame->data,pConvertedFrame->linesize,buffer,ffmpeg_pixfmt,st_info->width,st_info->height,1);
 		
 	int frameFinished;
 	int size = 0;
@@ -188,7 +188,7 @@ int ReadFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data, 
 		  }    
 		  st_info->current_index++;
 	      }
-	      av_free_packet(&packet);
+	      av_packet_unref(&packet);
 	  }
 	}
 
@@ -332,7 +332,7 @@ int NextFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data)
 	uint8_t *buffer;
 	int numBytes;
 	// Determine required buffer size and allocate buffer
-	numBytes=avpicture_get_size(ffmpeg_pixfmt, st_info->width,st_info->height);
+	numBytes=av_image_get_buffer_size(ffmpeg_pixfmt,st_info->width,st_info->height,1);
 	buffer=(uint8_t *)av_malloc(numBytes*sizeof(uint8_t));
 	if (buffer == NULL){
 		debug_printf(("Can't allocate picture buffer\n"));
@@ -341,7 +341,7 @@ int NextFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data)
 	    return -1;
 	}
 
-	avpicture_fill((AVPicture *)pConvertedFrame,buffer,ffmpeg_pixfmt,st_info->width,st_info->height);
+	av_image_fill_arrays(pConvertedFrame->data,pConvertedFrame->linesize,buffer,ffmpeg_pixfmt,st_info->width,st_info->height,1);
 		
 	int frameFinished;
 	int size = 0;
@@ -389,7 +389,7 @@ int NextFrames2(VFInfo *st_info, OnFrameCallabck callback, void* callback_data)
 				st_info->current_index++;
 		    }
     	  }
-    	        av_free_packet(&packet);
+    	        av_packet_unref(&packet);
 	}
 	
 	av_free(buffer);
